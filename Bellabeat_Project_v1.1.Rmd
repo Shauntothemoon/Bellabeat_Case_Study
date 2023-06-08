@@ -1,0 +1,217 @@
+---
+title: "BellaBeat"
+author: "Shaun"
+date: "8/20/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Summary
+
+This is a case study for Bellabeat, a high-tech manufacturer of health-focused products (especially smart devices) for women. The goal of this study is to conduct an analysis about how consumers use their wellness devices from datasets of about 30 Fitbit Fitness users' usage during a month. Since Fitbit Fitness Tracker is in the similar niche of Bellabeat's Leaf, insights gained from this analysis could hopefully inspire the marketing strategy of Leaf as required of this case study.
+
+
+### Approach
+
+Main questions of this case study are:
+
+1. What are some trends in smart device usage?
+2. How could these trends apply to Bellabeat customers?
+3. How could these trends help influence Bellabeat marketing strategy?
+
+To answer these questions as well as to make recommendations, it is important to evaluate them with a more measurable form. Thus, following detailed questions are asked:
+
+1. What's frequencies of each feature that is utilized by consumers? (e.g. Which feature is mostly used? Which is the least?)
+2. What are relationships between metrics measured by each feature?
+3. Could these consumers be grouped by some metrics (e.g. average daily calories)? If could, what is the porportion for each segment?
+4. If these consumers could be grouped, could their data show any differents, patterns, and trends (especially choronological ones)?
+
+## Prepare
+
+```{r Loading libs}
+# Loading packages:
+
+library(tidyverse)
+library(lubridate)
+library(janitor)
+```
+
+
+
+```{r Loading data}
+
+# Loading datasets:
+
+daily_activity <- read_csv('~/Desktop/Google DA Certificate/Course 8/Fitabase Data 4.12.16-5.12.16/dailyActivity_merged.csv')
+daily_calories <- read_csv('~/Desktop/Google DA Certificate/Course 8/Fitabase Data 4.12.16-5.12.16/dailyCalories_merged.csv')
+daily_intensities <- read_csv('~/Desktop/Google DA Certificate/Course 8/Fitabase Data 4.12.16-5.12.16/dailyIntensities_merged.csv')
+daily_steps <- read_csv('~/Desktop/Google DA Certificate/Course 8/Fitabase Data 4.12.16-5.12.16/dailySteps_merged.csv')
+heartrate_seconds <- read_csv('~/Desktop/Google DA Certificate/Course 8/Fitabase Data 4.12.16-5.12.16/heartrate_seconds_merged.csv')
+sleep_day <- read_csv('~/Desktop/Google DA Certificate/Course 8/Fitabase Data 4.12.16-5.12.16/sleepDay_merged.csv')
+weight_loginfo <- read_csv('~/Desktop/Google DA Certificate/Course 8/Fitabase Data 4.12.16-5.12.16/weightLogInfo_merged.csv')
+
+```
+
+What are the differences of the usage between each feature?
+
+## Process
+
+
+For the daily data, we could merge these related tables together to make it more clear. The weight log is excluded because there are too few distinct users. However, before and after merging tables, some data cleaning must be done to keep the integrity (e.g. the date in raw tables are originally strings).
+
+```{r}
+
+# Standarizing the data column in each table:
+
+d_sleep <- sleep_day %>% 
+  rename(ActivityDay = SleepDay) %>% 
+  separate(ActivityDay, c("ActivityDay", "time"), sep = " ") %>% 
+  mutate(ActivityDay = mdy(ActivityDay)) %>% 
+  clean_names() %>% 
+  select(c(1, 2, 4, 5, 6))
+
+d_act <- daily_activity %>% 
+  mutate(ActivityDay = mdy(ActivityDate)) %>% 
+  clean_names()
+
+# Merging the data into one table. It should be noted that the number of observations changed from 940 to 413.
+
+daily <- d_act %>% 
+  merge(d_sleep, by = c('id', 'activity_day')) %>% 
+  select(-3)
+
+# Adding a label to indicate/group the general sleeping quality.
+
+daily <- daily %>% 
+  mutate(sleep_quality = ifelse(total_minutes_asleep <= 420, "Less than 7hr", 
+         ifelse(total_minutes_asleep <= 540, "7hr to 9hr", "More than 9hr")))
+
+```
+
+After that, we could also create a summary table that group the data by each user's averages. This will allow us to track the difference between each user, and try to group them for further analysis.
+
+```{r}
+
+sum_daily <- daily %>% 
+  group_by(id) %>% 
+  summarize(avg_steps = mean(total_steps), avg_cal = mean(calories), avg_asleep = mean(total_minutes_asleep), avg_bed = mean(total_time_in_bed), avg_sedentary = mean(sedentary_minutes))
+
+sum_daily <- sum_daily %>% 
+  mutate(asleep_rate = avg_asleep / avg_bed, avg_not_asleep_minutes = avg_bed - avg_asleep)
+
+sum_daily %>% 
+  select(avg_steps, avg_cal, avg_asleep, avg_bed, asleep_rate, avg_not_asleep_minutes) %>% 
+  summary()
+
+sum_daily <- sum_daily%>% 
+  mutate(avg_sleep_quality = ifelse(avg_asleep <= 420, "Less than 7hr", 
+                                    ifelse(avg_asleep <= 540, "7hr to 9hr", "More than 9hr")))
+
+
+```
+
+## Analyze and visualization
+
+As a start, we can firstly have a look at the usage frequncy of each feature:
+
+```{r Counting Distinct}
+# The usage of each feature, measured by distinct user id:
+
+n_distinct(daily_activity$Id)
+n_distinct(daily_calories$Id)
+n_distinct(daily_intensities$Id)
+n_distinct(daily_steps$Id)
+n_distinct(heartrate_seconds$Id)
+n_distinct(sleep_day$Id)
+n_distinct(weight_loginfo$Id)
+
+```
+
+This should be noted that the weight log feature (about 24%) and the heart rate monitoring feature (about 42%) are less utilized. There might be several reasons for this (e.g. the operation is not convenient, or the heartrate feature might cause higher battery costs thus the user needs to often recharge the tracker.), and more data needed to be collected for further analysis.
+
+Additionally, we could calculate the proportion of manually logged weight:
+
+```{r}
+
+weight_loginfo %>% 
+  count(IsManualReport)
+
+```
+
+It seems that more than 60% data in weight log is manually entered, which implies a possibility that Fitbit's device was hard to collect this data automatically, thus many users did not choose to keep it by themselves.
+
+Secondly, we could check the relationship between users' daily steps and calories. By determine it, we could gain insights about the effectiveness of the step tracking feature ("walking makes you fitter!"). And just as expected, the graph shows a roughly positive correlation.
+
+```{r}
+ggplot(data = daily, mapping = aes(x = total_steps, y = calories, color = calories)) +
+  geom_point() +
+  geom_smooth()
+```
+
+Besides, we could also enhance this insight by checking the skewness of steps:
+
+```{r}
+ggplot(data = daily, mapping = aes(x = total_steps)) +
+  geom_histogram(bins = 30)
+```
+
+Since subtracting the median from the mean of it (`mean(daily$total_steps) - median(daily$total_steps)`)results negative, this data is left skewed, which means more users are willing to take more steps for consuming calories. Thus, we could reach a conclusion that the step & calories tracking feature fits a major segment of customers' needs.
+
+Thirdly, we would focus on the sleep quality of users.
+By dividing the records into 3 major groups, we could find a clear distribution of their sleep times:
+
+```{r}
+ggplot(data = daily, mapping = aes(x = total_minutes_asleep, fill = sleep_quality)) +
+  geom_histogram(bins = 30)
+```
+
+Moreover, there is also another pattern between users' sleep quality and their sedentray times:
+
+```{r}
+ggplot(data = daily, mapping = aes(x = total_minutes_asleep, y = sedentary_minutes)) + 
+  geom_point(color = 'green')+
+  geom_smooth()
+```
+
+With a grouped graph, we could find this pattern even more clear:
+
+```{r}
+ggplot(data = sum_daily, mapping = aes(x = avg_asleep, y = avg_sedentary, color = avg_sleep_quality)) + 
+  geom_point()
+```
+
+
+Thus, we could conclude that being sedentary seems negatively related with users' sleep quality. It suggests that Bellabeat's Leaf could provide a related function such as noticing its user if he/she keeps static for too long.
+
+## Summary and Recommendations
+
+Based on the anlysis above, there are three major recommendations for Bellabeat:
+
+* The heart rate monitoring feature and the weight log feature are less utilized by users.
+
+For Leaf's similar features, same patterns may also occur. Though further data is needed for further analysis, there are several hypotheses suggesting possible reasons:
+1. The heart rate monitoring feature might be energy consuming, which leads to poorer battery life. Leaf's engineering team could work on this to reduce user's concerns about it.
+2. The weight log feature might be hard to use on Fitbit, thus most users have to enter the data manually. Leaf could try to improve its performance in this aspect.
+
+* The number of daily steps are positively related to calories consuming, and the major segment of users like it.
+
+The correlation between these two metrics suggests that Bellabeat could emphasize this feature on Leaf, or even add more functions around it. For example, it could show a live tracker of how many steps are still needed to achieve user's daily calories goal.
+
+* Being static is negatively related to user's sleep quality.
+
+Similarly, a clearly negative correlation between sedentary times and sleep quality could help Bellabeat design Leaf's feature and marketing strategy around it. For example, Leaf could notice user if he or she is sitting for too long, and the advertisement could emphasize this feature to attract people with sleeping issues.
+
+
+
+
+
+
+
+
+
+
+
+
